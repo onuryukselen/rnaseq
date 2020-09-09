@@ -14,9 +14,6 @@ if (!params.run_FeatureCounts_after_Tophat2){params.run_FeatureCounts_after_Toph
 if (!params.run_FeatureCounts_after_RSEM){params.run_FeatureCounts_after_RSEM = ""} 
 if (!params.mate){params.mate = ""} 
 if (!params.reads){params.reads = ""} 
-if (!params.genome_url){params.genome_url = ""} 
-if (!params.gtf_url){params.gtf_url = ""} 
-if (!params.commondb_url){params.commondb_url = ""} 
 
 Channel.value(params.run_FeatureCounts_after_STAR).set{g_179_run_featureCounts_g221_125}
 Channel.value(params.run_FeatureCounts_after_Hisat2).set{g_188_run_featureCounts_g220_125}
@@ -28,20 +25,28 @@ Channel
 	.ifEmpty { error "Cannot find any reads matching: ${params.reads}" }
 	.into{g_205_reads_g213_3;g_205_reads_g213_18}
 
-g_210_genome_url_g209_15 = file(params.genome_url, type: 'any') 
-g_211_gtf_url_g209_15 = file(params.gtf_url, type: 'any') 
-Channel.value(params.commondb_url).set{g_212_commondb_url_g209_15}
 
 params.gtf =  ""  //* @input
 params.genome =  ""  //* @input
 params.commondb =  ""  //* @input
+params.genome_url =  ""  //* @input
+params.gtf_url =  ""  //* @input
+params.commondb_url =  ""  //* @input
+
+def downFile(path){
+    if (path.take(1).indexOf("/") == 0){
+      target=path
+    } else {
+      a=file(path)
+      fname = a.getName().toString()
+      target = "${baseDir}/work/${fname}"
+      a.copyTo(target) 
+    }
+    return target
+}
 
 process Check_and_Build_Module_Check_Genome_GTF {
 
-input:
- file fasta from g_210_genome_url_g209_15
- file downGtf from g_211_gtf_url_g209_15
- val commondb_url from g_212_commondb_url_g209_15
 
 output:
  val "${params.genome}"  into g209_15_genomePath_g209_0, g209_15_genomePath_g209_6, g209_15_genomePath_g209_8, g209_15_genomePath_g209_10, g209_15_genomePath_g209_5, g209_15_genomePath_g209_13
@@ -54,26 +59,33 @@ params.run_checkAndBuild == "yes"
 script:
 gtf_dir  = params.gtf.substring(0, params.gtf.lastIndexOf('/')) 
 genome_dir  = params.genome.substring(0, params.genome.lastIndexOf('/')) 
-slashCount = commondb_url.count("/")
+slashCount = params.commondb_url.count("/")
 cutDir = slashCount - 3;
 
+downGenomePath = ""
+downGtfPath = ""
+if ( !file("${params.genome}").exists() ) {
+	downGenomePath=downFile(params.genome_url)
+}
+if ( !file("${params.gtf}").exists() ) {
+	downGtfPath=downFile(params.gtf_url)
+}
+
 """
-downGenomePath=\$(realpath $fasta)
-downGtfPath=\$(realpath $downGtf)
 if [ ! -e "${params.genome}" ] ; then
     echo "${params.genome} not found"
     mkdir -p ${genome_dir}
-    cp -n \$downGenomePath ${params.genome}
+    cp -n $downGenomePath ${params.genome}
 fi
 if [ ! -e "${params.gtf}" ] ; then
     echo "${params.gtf} not found"
     mkdir -p ${gtf_dir}
-    cp -n \$downGtfPath ${params.gtf}
+    cp -n $downGtfPath ${params.gtf}
 fi
 if [ ! -e "${params.commondb}" ] ; then
     echo "${params.commondb} not found"
     mkdir -p ${params.commondb}
-    wget -l inf -nc -nH --cut-dirs=$cutDir -R 'index.html*' -r --no-parent --directory-prefix=${params.commondb} $commondb_url
+    wget -l inf -nc -nH --cut-dirs=$cutDir -R 'index.html*' -r --no-parent --directory-prefix=${params.commondb} ${params.commondb_url}
 fi
 
 """
@@ -540,9 +552,6 @@ simple_clip_threshold = params.Adapter_Trimmer_Quality_Module_Adapter_Removal.si
 discard_non_clipped = params.Adapter_Trimmer_Quality_Module_Adapter_Removal.discard_non_clipped
     
 remove_previous_reads = params.Adapter_Trimmer_Quality_Module_Adapter_Removal.remove_previous_reads
-workdir = workflow.workDir.toString()
-inputsdir = workdir.substring(0, workdir.lastIndexOf('/')) + "/inputs"    
-    
 discard_non_clipped_text = ""
 if (discard_non_clipped == "yes") {discard_non_clipped_text = "-c"}
 nameAll = reads.toString()
@@ -565,7 +574,8 @@ if (nameAll.contains('.gz')) {
  use strict;
  use File::Basename;
  use Getopt::Long;
- use Pod::Usage; 
+ use Pod::Usage;
+ use Cwd qw();
  
 runCmd("mkdir reads adapter unpaired");
 
@@ -598,11 +608,18 @@ if ("!{mate}" eq "pair") {
     }
 }
 if ("!{remove_previous_reads}" eq "true") {
+    my $currpath = Cwd::cwd();
+    my @paths = (split '/', $currpath);
+    splice(@paths, -2);
+    my $workdir= join '/', @paths;
+    splice(@paths, -1);
+    my $inputsdir = join '/', @paths;
+    $inputsdir .= "/inputs";
     print "INFO: inputs reads will be removed if they are located in the workdir inputsdir\\n";
     my @listOfFiles = `readlink -e !{file1} !{file2}`;
     foreach my $targetFile (@listOfFiles){
-        if (index($targetFile, "!{workdir}") != -1 || index($targetFile, "!{inputsdir}") != -1) {
-            runCmd("rm -f $targetFile");
+        if (index($targetFile, $workdir) != -1 || index($targetFile, $inputsdir) != -1) {
+            system("rm -f $targetFile");
             print "INFO: $targetFile deleted.\\n";
         }
     }
@@ -666,9 +683,6 @@ trim_length_3prime_R1 = params.Adapter_Trimmer_Quality_Module_Trimmer.trim_lengt
 trim_length_5prime_R2 = params.Adapter_Trimmer_Quality_Module_Trimmer.trim_length_5prime_R2
 trim_length_3prime_R2 = params.Adapter_Trimmer_Quality_Module_Trimmer.trim_length_3prime_R2
 remove_previous_reads = params.Adapter_Trimmer_Quality_Module_Trimmer.remove_previous_reads
-workdir = workflow.workDir.toString()
-inputsdir = workdir.substring(0, workdir.lastIndexOf('/')) + "/inputs"
-
 
 nameAll = reads.toString()
 nameArray = nameAll.split(' ')
@@ -691,6 +705,7 @@ if (nameAll.contains('.gz')) {
  use File::Basename;
  use Getopt::Long;
  use Pod::Usage; 
+ use Cwd qw();
  
 system("mkdir reads");
 system("!{runGzip}");
@@ -715,10 +730,17 @@ if ("!{mate}" eq "pair") {
     trimFiles($file1, $trim1, $len);
 }
 if ("!{remove_previous_reads}" eq "true") {
-    print "INFO: inputs reads will be removed if they are located in the workdir/inputsdir\\n";
-    my @listOfFiles = `readlink -e $file1 $file2`;
+    my $currpath = Cwd::cwd();
+    my @paths = (split '/', $currpath);
+    splice(@paths, -2);
+    my $workdir= join '/', @paths;
+    splice(@paths, -1);
+    my $inputsdir= join '/', @paths;
+    $inputsdir .= "/inputs";
+    print "INFO: inputs reads will be removed if they are located in the workdir inputsdir\\n";
+    my @listOfFiles = `readlink -e !{file1} !{file2}`;
     foreach my $targetFile (@listOfFiles){
-        if (index($targetFile, "!{workdir}") != -1 || index($targetFile, "!{inputsdir}") != -1) {
+        if (index($targetFile, $workdir) != -1 || index($targetFile, $inputsdir) != -1) {
             system("rm -f $targetFile");
             print "INFO: $targetFile deleted.\\n";
         }
@@ -924,9 +946,7 @@ minQuality = params.Adapter_Trimmer_Quality_Module_Quality_Filtering.minQuality
 minPercent = params.Adapter_Trimmer_Quality_Module_Quality_Filtering.minPercent
 
 remove_previous_reads = params.Adapter_Trimmer_Quality_Module_Quality_Filtering.remove_previous_reads
-workdir = workflow.workDir.toString()
-inputsdir = workdir.substring(0, workdir.lastIndexOf('/')) + "/inputs"
-    
+
 nameAll = reads.toString()
 nameArray = nameAll.split(' ')
 file2 ="";
@@ -948,6 +968,7 @@ if (nameAll.contains('.gz')) {
  use File::Basename;
  use Getopt::Long;
  use Pod::Usage; 
+ use Cwd qw();
  
 system("mkdir reads unpaired");
 system("!{runGzip}");
@@ -975,10 +996,17 @@ if ("!{tool}" eq "trimmomatic") {
     }
 }
 if ("!{remove_previous_reads}" eq "true") {
-    print "INFO: inputs reads will be removed if they are located in the workdir or inputsdir\\n";
+    my $currpath = Cwd::cwd();
+    my @paths = (split '/', $currpath);
+    splice(@paths, -2);
+    my $workdir= join '/', @paths;
+    splice(@paths, -1);
+    my $inputsdir= join '/', @paths;
+    $inputsdir .= "/inputs";
+    print "INFO: inputs reads will be removed if they are located in the workdir inputsdir\\n";
     my @listOfFiles = `readlink -e !{file1} !{file2}`;
     foreach my $targetFile (@listOfFiles){
-        if (index($targetFile, "!{workdir}") != -1 || index($targetFile, "!{inputsdir}") != -1) {
+        if (index($targetFile, $workdir) != -1 || index($targetFile, $inputsdir) != -1) {
             system("rm -f $targetFile");
             print "INFO: $targetFile deleted.\\n";
         }
@@ -1153,11 +1181,11 @@ if (nameAll.contains('.gz')) {
 remove_duplicates = params.Sequential_Mapping_Module_Sequential_Mapping.remove_duplicates
 remove_duplicates_based_on_UMI_after_mapping = params.Sequential_Mapping_Module_Sequential_Mapping.remove_duplicates_based_on_UMI_after_mapping
 remove_previous_reads = params.Sequential_Mapping_Module_Sequential_Mapping.remove_previous_reads
-workflowWorkDir = workflow.workDir
 
 """
 #!/bin/bash
-mkdir reads final_reads bowfiles 
+mkdir reads final_reads bowfiles
+workflowWorkDir=\$(cd ../../ && pwd)
 if [ -n "${mappingList}" ]; then
     $runGzip
     #rename files to standart format
@@ -1324,7 +1352,7 @@ if [ -n "${mappingList}" ]; then
                     for f in \${prev}/*; do
                         targetFile=\$(readlink -e \$f)
                         echo "INFO: targetFile: \$targetFile"
-                        if [[ \$targetFile == *"${workflowWorkDir}"* ]]; then
+                        if [[ \$targetFile == *"\${workflowWorkDir}"* ]]; then
                             rm -f \$targetFile
                             echo "INFO: \$targetFile located in workdir and deleted."
                         fi
@@ -1589,6 +1617,21 @@ igv_extention_factor = params.BAM_Analysis_RSEM_IGV_BAM2TDF_converter.igv_extent
 igv_window_size = params.BAM_Analysis_RSEM_IGV_BAM2TDF_converter.igv_window_size
 
 params.genome =  ""  //* @input
+
+//* autofill
+if ($HOSTNAME == "default"){
+    $CPU  = 1
+    $MEMORY = 32
+}
+//* platform
+if ($HOSTNAME == "ghpcc06.umassrc.org"){
+    $TIME = 400
+    $CPU  = 1
+    $MEMORY = 32
+    $QUEUE = "long"
+} 
+//* platform
+//* autofill
 
 process BAM_Analysis_RSEM_IGV_BAM2TDF_converter {
 
@@ -2023,6 +2066,21 @@ igv_window_size = params.BAM_Analysis_Tophat2_IGV_BAM2TDF_converter.igv_window_s
 
 params.genome =  ""  //* @input
 
+//* autofill
+if ($HOSTNAME == "default"){
+    $CPU  = 1
+    $MEMORY = 32
+}
+//* platform
+if ($HOSTNAME == "ghpcc06.umassrc.org"){
+    $TIME = 400
+    $CPU  = 1
+    $MEMORY = 32
+    $QUEUE = "long"
+} 
+//* platform
+//* autofill
+
 process BAM_Analysis_Tophat2_IGV_BAM2TDF_converter {
 
 publishDir params.outdir, overwrite: true, mode: 'copy',
@@ -2362,7 +2420,7 @@ if ($HOSTNAME == "default"){
 }
 //* platform
 if ($HOSTNAME == "ghpcc06.umassrc.org"){
-    $TIME = 500
+    $TIME = 1000
     $CPU  = 3
     $MEMORY = 32
     $QUEUE = "long"
@@ -2691,6 +2749,21 @@ igv_extention_factor = params.BAM_Analysis_STAR_IGV_BAM2TDF_converter.igv_extent
 igv_window_size = params.BAM_Analysis_STAR_IGV_BAM2TDF_converter.igv_window_size
 
 params.genome =  ""  //* @input
+
+//* autofill
+if ($HOSTNAME == "default"){
+    $CPU  = 1
+    $MEMORY = 32
+}
+//* platform
+if ($HOSTNAME == "ghpcc06.umassrc.org"){
+    $TIME = 400
+    $CPU  = 1
+    $MEMORY = 32
+    $QUEUE = "long"
+} 
+//* platform
+//* autofill
 
 process BAM_Analysis_STAR_IGV_BAM2TDF_converter {
 
@@ -3066,7 +3139,7 @@ if ($HOSTNAME == "default"){
 }
 //* platform
 if ($HOSTNAME == "ghpcc06.umassrc.org"){
-    $TIME = 100
+    $TIME = 240
     $CPU  = 4
     $MEMORY = 32
     $QUEUE = "short"
@@ -3382,6 +3455,21 @@ igv_extention_factor = params.BAM_Analysis_Hisat2_IGV_BAM2TDF_converter.igv_exte
 igv_window_size = params.BAM_Analysis_Hisat2_IGV_BAM2TDF_converter.igv_window_size
 
 params.genome =  ""  //* @input
+
+//* autofill
+if ($HOSTNAME == "default"){
+    $CPU  = 1
+    $MEMORY = 32
+}
+//* platform
+if ($HOSTNAME == "ghpcc06.umassrc.org"){
+    $TIME = 400
+    $CPU  = 1
+    $MEMORY = 32
+    $QUEUE = "long"
+} 
+//* platform
+//* autofill
 
 process BAM_Analysis_Hisat2_IGV_BAM2TDF_converter {
 
@@ -5155,7 +5243,8 @@ my @rawFiles = split(/[\\n]+/, $contents);
 my @files = ();
 # order must be in this order for chipseq pipeline: bowtie->dedup
 # rsem bam pipeline: dedup->rsem, star->dedup
-my @order = ("adapter_removal","trimmer","quality","extractUMI","sequential_mapping","bowtie","star","hisat2","tophat2", "dedup","rsem");
+# riboseq ncRNA_removal->star
+my @order = ("adapter_removal","trimmer","quality","extractUMI","sequential_mapping","ncRNA_removal","bowtie","star","hisat2","tophat2", "dedup","rsem","kallisto");
 for ( my $k = 0 ; $k <= $#order ; $k++ ) {
     for ( my $i = 0 ; $i <= $#rawFiles ; $i++ ) {
         if ( $rawFiles[$i] =~ /$order[$k]/ ) {
