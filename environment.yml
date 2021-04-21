@@ -23,3 +23,4 @@ dependencies:
   - fastx_toolkit=0.0.14
   - ucsc-wigToBigWig=366
   - bioconda::kallisto=0.46.0
+  - awscli=1.19.54
